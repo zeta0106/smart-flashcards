@@ -3,7 +3,7 @@
  * Design: Scholarly Minimal — clean, sticky, with subtle backdrop blur
  */
 import { Link, useLocation } from "wouter";
-import { BookOpen, Plus, RotateCcw, Layers } from "lucide-react";
+import { BookOpen, Plus, RotateCcw, Layers, LayoutDashboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +12,7 @@ const navLinks = [
   { href: "/features", label: "Features" },
   { href: "/create", label: "Create" },
   { href: "/review", label: "Review" },
+  { href: "/dashboard", label: "Dashboard" },
 ];
 
 export default function Navbar() {
@@ -56,10 +57,10 @@ export default function Navbar() {
               New Card
             </Button>
           </Link>
-          <Link href="/review">
+          <Link href="/dashboard">
             <Button size="sm" variant="outline" className="hidden sm:flex gap-1.5 bg-background">
-              <RotateCcw size={14} />
-              Review
+              <LayoutDashboard size={14} />
+              Dashboard
             </Button>
           </Link>
           {/* Mobile menu icon */}

@@ -3,7 +3,7 @@
  * Design: Scholarly Minimal — understated, clean
  */
 import { Link } from "wouter";
-import { BookOpen } from "lucide-react";
+import { BookOpen, Github } from "lucide-react";
 
 export default function Footer() {
   return (
@@ -33,12 +33,29 @@ export default function Footer() {
           <Link href="/review">
             <span className="hover:text-foreground transition-colors">Review</span>
           </Link>
+          <Link href="/dashboard">
+            <span className="hover:text-foreground transition-colors">Dashboard</span>
+          </Link>
         </nav>
 
-        {/* Tagline */}
-        <p className="text-xs text-muted-foreground text-center">
-          Study smarter with active recall &amp; spaced repetition.
-        </p>
+        {/* Tagline + credit */}
+        <div className="flex flex-col items-center md:items-end gap-1.5 text-center md:text-right">
+          <p className="text-xs text-muted-foreground">
+            Study smarter with active recall &amp; spaced repetition.
+          </p>
+          <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+            <Github size={12} />
+            Made by{" "}
+            <a
+              href="https://github.com/zeta0106"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-primary hover:underline"
+            >
+              zeta0106
+            </a>
+          </p>
+        </div>
       </div>
     </footer>
   );
