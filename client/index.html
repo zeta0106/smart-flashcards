@@ -12,20 +12,22 @@
     <!-- GitHub Pages SPA routing: restore path from ?p= redirect -->
     <script>
       (function(){
-        var redirect = sessionStorage.redirect;
-        delete sessionStorage.redirect;
-        if (redirect && redirect !== location.href) {
-          history.replaceState(null, null, redirect);
-        }
-        // Also handle the ?p= approach from 404.html
+        // Decode the ?p= query param written by 404.html and restore the real URL
         var search = window.location.search;
-        if (search.indexOf('?p=') === 0 || search.indexOf('&p=') !== -1) {
-          var r = search.slice(1).split('&').reduce(function(o,s){ var p=s.split('='); o[p[0]]=p.slice(1).join('=').replace(/~and~/g,'&'); return o; }, {});
-          if (r.p !== undefined) {
-            window.history.replaceState(null, null,
-              window.location.pathname.split('/').slice(0,2).join('/') + (r.p || '') +
-              (r.q ? '?' + r.q : '') + (window.location.hash || '')
-            );
+        if (search.length > 1) {
+          var params = {};
+          search.slice(1).split('&').forEach(function(s) {
+            var idx = s.indexOf('=');
+            if (idx > -1) params[s.slice(0, idx)] = decodeURIComponent(s.slice(idx + 1));
+          });
+          if (params.p !== undefined) {
+            // Rebuild: keep the repo prefix (/smart-flashcards) + the SPA route (/review etc.)
+            var pathParts = window.location.pathname.split('/');
+            var repoPrefix = pathParts[1] ? '/' + pathParts[1] : '';
+            var restored = repoPrefix + (params.p || '/') +
+              (params.q ? '?' + params.q : '') +
+              (window.location.hash || '');
+            window.history.replaceState(null, null, restored);
           }
         }
       }());
