@@ -1,24 +1,25 @@
 /**
  * Create Page — Smart Flashcards
  * Design: Scholarly Minimal
+ * Data: Firebase Firestore via useFlashcards hook
  * Features: Question/Answer form, tag input, category selector,
- *           saved cards list, delete cards, export/import JSON
+ *           set management, PDF.js import, card library
  */
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus, Tag, X, Save, Trash2, Download, Upload,
-  BookOpen, Search, ChevronDown, CheckCircle2
+  BookOpen, Search, ChevronDown, Loader2, FileText
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
-import {
-  getAllCards, addCard, deleteCard, saveAllCards,
-  getAllSets, addSet, addCardToSet,
-  type Flashcard, type FlashcardSet,
-} from "@/lib/flashcards";
+import { useFlashcards } from "@/hooks/useFlashcards";
+import { useAuth } from "@/contexts/AuthContext";
+import type { Flashcard } from "@/lib/flashcards";
 
 const CATEGORIES = [
   "Mathematics", "Biology", "Physics", "Chemistry",
@@ -32,8 +33,8 @@ const SET_COLORS = [
 ];
 
 export default function Create() {
-  const [cards, setCards] = useState<Flashcard[]>([]);
-  const [sets, setSets] = useState<FlashcardSet[]>([]);
+  const { user } = useAuth();
+  const { cards, sets, loading, addCard, deleteCard, addSet, deleteSet, addCardToSet } = useFlashcards();
 
   // Form state
   const [question, setQuestion] = useState("");
@@ -42,31 +43,30 @@ export default function Create() {
   const [tagInput, setTagInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [selectedSetId, setSelectedSetId] = useState<string>("");
-  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   // Library state
   const [searchQuery, setSearchQuery] = useState("");
   const [filterCategory, setFilterCategory] = useState("All");
 
-  // New set modal
+  // New set form
   const [showNewSet, setShowNewSet] = useState(false);
   const [newSetName, setNewSetName] = useState("");
   const [newSetDesc, setNewSetDesc] = useState("");
   const [newSetColor, setNewSetColor] = useState(SET_COLORS[0]);
 
+  // PDF import state
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfText, setPdfText] = useState("");
+  const [showPdfPanel, setShowPdfPanel] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    setCards(getAllCards());
-    setSets(getAllSets());
-  }, []);
-
-  // ── Tag handling ──
-  function addTag() {
+  // ── Tag handling ──────────────────────────────────────────────────────────
+  function addTagFromInput() {
     const t = tagInput.trim().toLowerCase();
-    if (t && !tags.includes(t)) {
-      setTags([...tags, t]);
-    }
+    if (t && !tags.includes(t)) setTags([...tags, t]);
     setTagInput("");
   }
 
@@ -75,86 +75,67 @@ export default function Create() {
   }
 
   function handleTagKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter" || e.key === ",") {
-      e.preventDefault();
-      addTag();
-    }
-    if (e.key === "Backspace" && !tagInput && tags.length > 0) {
-      setTags(tags.slice(0, -1));
-    }
+    if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTagFromInput(); }
+    if (e.key === "Backspace" && !tagInput && tags.length > 0) setTags(tags.slice(0, -1));
   }
 
-  // ── Save card ──
-  function handleSave() {
+  // ── Save card ─────────────────────────────────────────────────────────────
+  async function handleSave() {
     if (!question.trim() || !answer.trim()) {
       toast.error("Please fill in both Question and Answer fields.");
       return;
     }
-    const card = addCard(question.trim(), answer.trim(), tags, category);
-    if (selectedSetId) {
-      addCardToSet(selectedSetId, card.id);
-      setSets(getAllSets());
+    setSaving(true);
+    try {
+      const card = await addCard(question.trim(), answer.trim(), tags, category);
+      if (selectedSetId) await addCardToSet(selectedSetId, card.id);
+      setQuestion(""); setAnswer(""); setTags([]);
+      toast.success("Flashcard saved!");
+    } catch {
+      toast.error("Failed to save. Please try again.");
+    } finally {
+      setSaving(false);
     }
-    setCards(getAllCards());
-    setQuestion("");
-    setAnswer("");
-    setTags([]);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-    toast.success("Flashcard saved!");
   }
 
-  // ── Delete card ──
-  function handleDelete(id: string) {
-    deleteCard(id);
-    setCards(getAllCards());
-    setSets(getAllSets());
-    toast.success("Card deleted.");
-  }
-
-  // ── New set ──
-  function handleCreateSet() {
-    if (!newSetName.trim()) {
-      toast.error("Please enter a set name.");
-      return;
-    }
-    const s = addSet(newSetName.trim(), newSetDesc.trim(), newSetColor);
-    setSets(getAllSets());
+  // ── New set ───────────────────────────────────────────────────────────────
+  async function handleCreateSet() {
+    if (!newSetName.trim()) { toast.error("Please enter a set name."); return; }
+    const s = await addSet(newSetName.trim(), newSetDesc.trim(), newSetColor);
     setSelectedSetId(s.id);
     setShowNewSet(false);
-    setNewSetName("");
-    setNewSetDesc("");
+    setNewSetName(""); setNewSetDesc("");
     toast.success(`Set "${s.name}" created!`);
   }
 
-  // ── Export ──
+  // ── Export JSON ───────────────────────────────────────────────────────────
   function handleExport() {
-    const data = JSON.stringify(getAllCards(), null, 2);
+    const data = JSON.stringify(cards, null, 2);
     const blob = new Blob([data], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "smart-flashcards.json";
-    a.click();
+    const a = document.createElement("a"); a.href = url; a.download = "smart-flashcards.json"; a.click();
     URL.revokeObjectURL(url);
     toast.success("Cards exported!");
   }
 
-  // ── Import ──
-  function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+  // ── Import JSON ───────────────────────────────────────────────────────────
+  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       try {
         const imported = JSON.parse(ev.target?.result as string) as Flashcard[];
         if (!Array.isArray(imported)) throw new Error("Invalid format");
-        const existing = getAllCards();
-        const existingIds = new Set(existing.map((c) => c.id));
-        const newCards = imported.filter((c) => !existingIds.has(c.id));
-        saveAllCards([...existing, ...newCards]);
-        setCards(getAllCards());
-        toast.success(`Imported ${newCards.length} new card(s)!`);
+        const existingIds = new Set(cards.map((c) => c.id));
+        let count = 0;
+        for (const c of imported) {
+          if (!existingIds.has(c.id)) {
+            await addCard(c.question, c.answer, c.tags || [], c.category || "Other");
+            count++;
+          }
+        }
+        toast.success(`Imported ${count} new card(s)!`);
       } catch {
         toast.error("Failed to import: invalid JSON format.");
       }
@@ -163,7 +144,35 @@ export default function Create() {
     e.target.value = "";
   }
 
-  // ── Filtered cards ──
+  // ── PDF import ────────────────────────────────────────────────────────────
+  async function handlePdfUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPdfLoading(true);
+    setShowPdfPanel(true);
+    try {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let text = "";
+      for (let i = 1; i <= Math.min(pdf.numPages, 20); i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        text += content.items.map((item: any) => item.str).join(" ") + "\n";
+      }
+      setPdfText(text.trim().slice(0, 6000));
+      toast.success(`PDF extracted (${pdf.numPages} pages). Use the text to write your cards.`);
+    } catch {
+      toast.error("Could not read PDF. Make sure it contains selectable text.");
+    } finally {
+      setPdfLoading(false);
+      if (pdfInputRef.current) pdfInputRef.current.value = "";
+    }
+  }
+
+  // ── Filtered cards ────────────────────────────────────────────────────────
   const filteredCards = cards.filter((c) => {
     const matchSearch =
       !searchQuery ||
@@ -190,7 +199,7 @@ export default function Create() {
         </div>
 
         <div className="grid lg:grid-cols-5 gap-8">
-          {/* ── Form ── */}
+          {/* ── Form ─────────────────────────────────────────────────────── */}
           <div className="lg:col-span-3 space-y-5">
             <div className="bg-card rounded-2xl border border-border/60 p-6 shadow-sm space-y-5">
               {/* Question */}
@@ -232,9 +241,7 @@ export default function Create() {
                     onChange={(e) => setCategory(e.target.value)}
                     className="w-full appearance-none rounded-xl border border-input bg-background px-4 py-2.5 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   >
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
+                    {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                   <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                 </div>
@@ -244,11 +251,11 @@ export default function Create() {
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
                   <Tag size={13} /> Tags
-                  <span className="text-muted-foreground font-normal">(press Enter or comma to add)</span>
+                  <span className="text-muted-foreground font-normal text-xs">(Enter or comma to add)</span>
                 </label>
                 <div className="flex flex-wrap gap-1.5 min-h-[42px] rounded-xl border border-input bg-background px-3 py-2 focus-within:ring-2 focus-within:ring-ring transition-shadow">
                   {tags.map((t) => (
-                    <span key={t} className="tag-pill flex items-center gap-1">
+                    <span key={t} className="inline-flex items-center gap-1 bg-primary/10 text-primary text-xs rounded-full px-2.5 py-0.5">
                       {t}
                       <button onClick={() => removeTag(t)} className="ml-0.5 hover:text-destructive transition-colors">
                         <X size={10} />
@@ -259,7 +266,7 @@ export default function Create() {
                     value={tagInput}
                     onChange={(e) => setTagInput(e.target.value)}
                     onKeyDown={handleTagKeyDown}
-                    onBlur={addTag}
+                    onBlur={addTagFromInput}
                     placeholder={tags.length === 0 ? "e.g. formula, algebra" : ""}
                     className="flex-1 min-w-[100px] bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
                   />
@@ -267,232 +274,227 @@ export default function Create() {
               </div>
 
               {/* Add to Set */}
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                  <BookOpen size={13} /> Add to Set
-                  <span className="text-muted-foreground font-normal">(optional)</span>
-                </label>
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <select
-                      value={selectedSetId}
-                      onChange={(e) => setSelectedSetId(e.target.value)}
-                      className="w-full appearance-none rounded-xl border border-input bg-background px-4 py-2.5 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                    >
-                      <option value="">— No set —</option>
-                      {sets.map((s) => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                    </select>
-                    <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowNewSet(true)}
-                    className="shrink-0 gap-1.5 bg-background"
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium text-foreground">Add to Set</label>
+                  <button
+                    className="text-xs text-primary hover:underline"
+                    onClick={() => setShowNewSet(!showNewSet)}
                   >
-                    <Plus size={14} /> New Set
-                  </Button>
+                    {showNewSet ? "Cancel" : "+ New Set"}
+                  </button>
+                </div>
+                <AnimatePresence>
+                  {showNewSet && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="bg-muted/40 rounded-xl p-4 space-y-3 border border-border/40">
+                        <input
+                          className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                          placeholder="Set name"
+                          value={newSetName}
+                          onChange={(e) => setNewSetName(e.target.value)}
+                        />
+                        <input
+                          className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                          placeholder="Description (optional)"
+                          value={newSetDesc}
+                          onChange={(e) => setNewSetDesc(e.target.value)}
+                        />
+                        <div className="flex gap-2 flex-wrap items-center">
+                          <span className="text-xs text-muted-foreground">Color:</span>
+                          {SET_COLORS.map((c) => (
+                            <button
+                              key={c}
+                              className={cn("h-5 w-5 rounded-full border-2 transition-transform", newSetColor === c ? "border-foreground scale-110" : "border-transparent")}
+                              style={{ backgroundColor: c }}
+                              onClick={() => setNewSetColor(c)}
+                            />
+                          ))}
+                        </div>
+                        <Button size="sm" onClick={handleCreateSet} className="w-full">Create Set</Button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                <div className="relative">
+                  <select
+                    value={selectedSetId}
+                    onChange={(e) => setSelectedSetId(e.target.value)}
+                    className="w-full appearance-none rounded-xl border border-input bg-background px-4 py-2.5 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="">— No set —</option>
+                    {sets.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                  <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                 </div>
               </div>
 
-              {/* Save Button */}
+              {/* Save button */}
               <Button
+                size="lg"
+                className="w-full gap-2 shadow-sm"
                 onClick={handleSave}
-                className="w-full gap-2 h-11 text-base shadow-sm"
+                disabled={saving}
               >
-                <AnimatePresence mode="wait">
-                  {saved ? (
-                    <motion.span
-                      key="saved"
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="flex items-center gap-2"
-                    >
-                      <CheckCircle2 size={17} /> Saved!
-                    </motion.span>
-                  ) : (
-                    <motion.span
-                      key="save"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      className="flex items-center gap-2"
-                    >
-                      <Save size={17} /> Save Flashcard
-                    </motion.span>
-                  )}
-                </AnimatePresence>
+                {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                {saving ? "Saving…" : "Save Flashcard"}
               </Button>
             </div>
 
-            {/* Import / Export */}
-            <div className="flex gap-3">
-              <Button variant="outline" onClick={handleExport} className="flex-1 gap-2 bg-background">
-                <Download size={15} /> Export JSON
+            {/* PDF Import panel */}
+            <div className="bg-card rounded-2xl border border-border/60 p-5 shadow-sm space-y-3">
+              <div className="flex items-center gap-2">
+                <FileText size={16} className="text-primary" />
+                <h3 className="text-sm font-semibold text-foreground">Import from PDF</h3>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Upload a PDF to extract its text. Use the extracted content to write flashcards faster.
+              </p>
+              <input ref={pdfInputRef} type="file" accept=".pdf" className="hidden" onChange={handlePdfUpload} />
+              <Button
+                size="sm" variant="outline" className="gap-2 bg-background w-full"
+                onClick={() => pdfInputRef.current?.click()}
+                disabled={pdfLoading}
+              >
+                {pdfLoading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                {pdfLoading ? "Extracting text…" : "Upload PDF"}
               </Button>
-              <Button variant="outline" onClick={() => fileInputRef.current?.click()} className="flex-1 gap-2 bg-background">
-                <Upload size={15} /> Import JSON
+              {showPdfPanel && pdfText && (
+                <div className="space-y-2">
+                  <p className="text-xs text-muted-foreground">Extracted text (first 6,000 chars). Copy sections to create your cards:</p>
+                  <textarea
+                    className="w-full rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs font-mono resize-none focus:outline-none"
+                    rows={10}
+                    readOnly
+                    value={pdfText}
+                  />
+                  <Button size="sm" variant="ghost" className="text-xs" onClick={() => { setPdfText(""); setShowPdfPanel(false); }}>
+                    Clear
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* Export / Import JSON */}
+            <div className="flex gap-3">
+              <Button variant="outline" size="sm" className="flex-1 gap-2 bg-background" onClick={handleExport}>
+                <Download size={14} /> Export JSON
+              </Button>
+              <Button variant="outline" size="sm" className="flex-1 gap-2 bg-background" onClick={() => fileInputRef.current?.click()}>
+                <Upload size={14} /> Import JSON
               </Button>
               <input ref={fileInputRef} type="file" accept=".json" className="hidden" onChange={handleImport} />
             </div>
           </div>
 
-          {/* ── Card Library ── */}
+          {/* ── Card Library ──────────────────────────────────────────────── */}
           <div className="lg:col-span-2 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="font-serif text-xl text-foreground">Your Library</h2>
-              <span className="text-xs text-muted-foreground">{cards.length} card{cards.length !== 1 ? "s" : ""}</span>
+              <h2 className="text-lg font-semibold text-foreground">
+                Your Cards
+                <span className="ml-2 text-sm font-normal text-muted-foreground">({cards.length})</span>
+              </h2>
             </div>
 
-            {/* Search */}
-            <div className="relative">
-              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search cards…"
-                className="w-full rounded-xl border border-input bg-background pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
-
-            {/* Category filter */}
-            <div className="flex flex-wrap gap-1.5">
-              {allCategories.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setFilterCategory(cat)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
-                    filterCategory === cat
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground hover:bg-muted/80"
-                  }`}
+            {/* Search + filter */}
+            <div className="space-y-2">
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  placeholder="Search cards…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none rounded-lg border border-border bg-card px-3 py-2 text-sm focus:outline-none pr-8"
+                  value={filterCategory}
+                  onChange={(e) => setFilterCategory(e.target.value)}
                 >
-                  {cat}
-                </button>
-              ))}
+                  {allCategories.map((c) => <option key={c}>{c}</option>)}
+                </select>
+                <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+              </div>
             </div>
+
+            {/* Sets list */}
+            {sets.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Your Sets</p>
+                {sets.map((s) => (
+                  <div key={s.id} className="flex items-center gap-2 bg-card border border-border/60 rounded-lg px-3 py-2">
+                    <div className="h-3 w-3 rounded-full flex-shrink-0" style={{ backgroundColor: s.color }} />
+                    <span className="text-sm font-medium text-foreground flex-1 truncate">{s.name}</span>
+                    <span className="text-xs text-muted-foreground">{s.cardIds.length} cards</span>
+                    <button
+                      className="text-muted-foreground hover:text-destructive transition-colors"
+                      onClick={() => deleteSet(s.id)}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Cards list */}
-            <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1">
-              <AnimatePresence>
-                {filteredCards.length === 0 ? (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="text-center py-12 text-muted-foreground text-sm"
-                  >
-                    <BookOpen size={32} className="mx-auto mb-3 opacity-30" />
-                    {cards.length === 0
-                      ? "No cards yet. Create your first one!"
-                      : "No cards match your search."}
-                  </motion.div>
-                ) : (
-                  filteredCards.map((card) => (
+            {loading ? (
+              <div className="flex items-center justify-center py-16 text-muted-foreground gap-2 text-sm">
+                <Loader2 size={18} className="animate-spin" /> Loading your cards…
+              </div>
+            ) : filteredCards.length === 0 ? (
+              <div className="bg-muted/40 rounded-xl p-10 text-center text-muted-foreground text-sm flex flex-col items-center gap-2">
+                <BookOpen size={28} className="text-muted-foreground/40" />
+                {cards.length === 0
+                  ? "No cards yet. Create your first one!"
+                  : "No cards match your search."}
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+                <AnimatePresence>
+                  {filteredCards.map((card) => (
                     <motion.div
                       key={card.id}
-                      initial={{ opacity: 0, y: 10 }}
+                      initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={{ opacity: 0, x: -20 }}
-                      className="group bg-card rounded-xl border border-border/60 p-4 hover:border-primary/30 transition-colors"
+                      className="bg-card border border-border/60 rounded-xl p-3.5 flex gap-3 shadow-sm group hover:shadow-md transition-shadow"
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-foreground line-clamp-2 leading-snug">
-                            {card.question}
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-1 line-clamp-1">
-                            {card.answer}
-                          </p>
-                          <div className="flex flex-wrap gap-1 mt-2">
-                            <span className="tag-pill">{card.category}</span>
-                            {card.tags.slice(0, 2).map((t) => (
-                              <span key={t} className="tag-pill">{t}</span>
-                            ))}
-                          </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground line-clamp-1">{card.question}</p>
+                        <p className="text-xs text-muted-foreground line-clamp-1 mt-0.5">{card.answer}</p>
+                        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                          <span className="inline-flex items-center text-xs bg-primary/10 text-primary rounded-full px-2 py-0.5">
+                            {card.category}
+                          </span>
+                          {card.tags.slice(0, 2).map((t) => (
+                            <span key={t} className="inline-flex items-center text-xs bg-muted text-muted-foreground rounded-full px-2 py-0.5">
+                              {t}
+                            </span>
+                          ))}
                         </div>
-                        <button
-                          onClick={() => handleDelete(card.id)}
-                          className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive p-1"
-                        >
-                          <Trash2 size={15} />
-                        </button>
                       </div>
+                      <button
+                        className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive flex-shrink-0 mt-0.5"
+                        onClick={() => deleteCard(card.id)}
+                      >
+                        <Trash2 size={14} />
+                      </button>
                     </motion.div>
-                  ))
-                )}
-              </AnimatePresence>
-            </div>
+                  ))}
+                </AnimatePresence>
+              </div>
+            )}
           </div>
         </div>
       </div>
-
-      {/* ── New Set Modal ── */}
-      <AnimatePresence>
-        {showNewSet && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
-            onClick={() => setShowNewSet(false)}
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-              className="bg-card rounded-2xl border border-border/60 shadow-2xl p-6 w-full max-w-md space-y-4"
-            >
-              <h3 className="font-serif text-xl text-foreground">Create New Set</h3>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">Set Name</label>
-                <input
-                  value={newSetName}
-                  onChange={(e) => setNewSetName(e.target.value)}
-                  placeholder="e.g. Biology Chapter 3"
-                  className="w-full rounded-xl border border-input bg-background px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">Description (optional)</label>
-                <input
-                  value={newSetDesc}
-                  onChange={(e) => setNewSetDesc(e.target.value)}
-                  placeholder="Brief description of this set"
-                  className="w-full rounded-xl border border-input bg-background px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">Colour</label>
-                <div className="flex gap-2">
-                  {SET_COLORS.map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => setNewSetColor(c)}
-                      className="h-7 w-7 rounded-full border-2 transition-transform hover:scale-110"
-                      style={{
-                        backgroundColor: c,
-                        borderColor: newSetColor === c ? c : "transparent",
-                        boxShadow: newSetColor === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : "none",
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <Button variant="outline" onClick={() => setShowNewSet(false)} className="flex-1 bg-background">
-                  Cancel
-                </Button>
-                <Button onClick={handleCreateSet} className="flex-1 gap-1.5">
-                  <Plus size={15} /> Create Set
-                </Button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       <Footer />
     </div>

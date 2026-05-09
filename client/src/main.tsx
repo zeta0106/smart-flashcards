@@ -1,9 +1,6 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
-import { seedIfEmpty } from "./lib/flashcards";
 
-// Seed example flashcards on first visit (before any page renders)
-seedIfEmpty();
-
+// Data is now stored in Firebase Firestore per user — no local seeding needed.
 createRoot(document.getElementById("root")!).render(<App />);
