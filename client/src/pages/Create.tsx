@@ -1,27 +1,33 @@
 /**
  * Create Page — Smart Flashcards
  * Design: Scholarly Minimal
- * Data: Firebase Firestore via useFlashcards hook
- * Features: Question/Answer form, tag input, category selector,
- *           set management, PDF.js import, card library
+ * Data: Firebase Firestore via useFlashcards hook + AuthContext for custom categories
+ * Features:
+ *   - Question/Answer form with tags
+ *   - Custom category management (add/delete, persisted to Firestore settings)
+ *   - Set management (create/delete, assign cards to sets)
+ *   - PDF.js text extraction (unpkg CDN worker, v5.x)
+ *   - JSON export/import
+ *   - Card library with search + filter
  */
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus, Tag, X, Save, Trash2, Download, Upload,
-  BookOpen, Search, ChevronDown, Loader2, FileText
+  BookOpen, Search, ChevronDown, Loader2, FileText, Pencil
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 import { useFlashcards } from "@/hooks/useFlashcards";
 import { useAuth } from "@/contexts/AuthContext";
+import { fsGetSettings, fsSaveSettings } from "@/lib/firebase";
 import type { Flashcard } from "@/lib/flashcards";
 
-const CATEGORIES = [
+// ── Default built-in categories (always available) ──────────────────────────
+const DEFAULT_CATEGORIES = [
   "Mathematics", "Biology", "Physics", "Chemistry",
   "History", "Geography", "Languages", "Literature",
   "Computer Science", "Economics", "Study Skills", "Other",
@@ -36,26 +42,76 @@ export default function Create() {
   const { user } = useAuth();
   const { cards, sets, loading, addCard, deleteCard, addSet, deleteSet, addCardToSet } = useFlashcards();
 
-  // Form state
+  // ── Custom categories (loaded from Firestore settings) ────────────────────
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
+  const [newCatInput, setNewCatInput] = useState("");
+  const [showCatManager, setShowCatManager] = useState(false);
+  const [savingCat, setSavingCat] = useState(false);
+
+  // All categories = defaults + user's custom ones
+  const allCategoryOptions = [...DEFAULT_CATEGORIES, ...customCategories.filter(c => !DEFAULT_CATEGORIES.includes(c))];
+
+  // Load custom categories from Firestore on mount
+  useEffect(() => {
+    if (!user) return;
+    fsGetSettings(user.uid).then((settings) => {
+      setCustomCategories(settings.customCategories ?? []);
+    });
+  }, [user]);
+
+  async function handleAddCategory() {
+    const cat = newCatInput.trim();
+    if (!cat) return;
+    if (allCategoryOptions.map(c => c.toLowerCase()).includes(cat.toLowerCase())) {
+      toast.error("Category already exists.");
+      return;
+    }
+    const updated = [...customCategories, cat];
+    setCustomCategories(updated);
+    setNewCatInput("");
+    setSavingCat(true);
+    try {
+      await fsSaveSettings(user!.uid, { customCategories: updated });
+      toast.success(`Category "${cat}" added!`);
+    } catch {
+      toast.error("Failed to save category.");
+    } finally {
+      setSavingCat(false);
+    }
+  }
+
+  async function handleDeleteCategory(cat: string) {
+    const updated = customCategories.filter(c => c !== cat);
+    setCustomCategories(updated);
+    if (category === cat) setCategory(DEFAULT_CATEGORIES[0]);
+    try {
+      await fsSaveSettings(user!.uid, { customCategories: updated });
+      toast.success(`Category "${cat}" removed.`);
+    } catch {
+      toast.error("Failed to remove category.");
+    }
+  }
+
+  // ── Form state ────────────────────────────────────────────────────────────
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
-  const [category, setCategory] = useState("Mathematics");
+  const [category, setCategory] = useState(DEFAULT_CATEGORIES[0]);
   const [tagInput, setTagInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [selectedSetId, setSelectedSetId] = useState<string>("");
   const [saving, setSaving] = useState(false);
 
-  // Library state
+  // ── Library state ─────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState("");
   const [filterCategory, setFilterCategory] = useState("All");
 
-  // New set form
+  // ── New set form ──────────────────────────────────────────────────────────
   const [showNewSet, setShowNewSet] = useState(false);
   const [newSetName, setNewSetName] = useState("");
   const [newSetDesc, setNewSetDesc] = useState("");
   const [newSetColor, setNewSetColor] = useState(SET_COLORS[0]);
 
-  // PDF import state
+  // ── PDF import state ──────────────────────────────────────────────────────
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfText, setPdfText] = useState("");
   const [showPdfPanel, setShowPdfPanel] = useState(false);
@@ -69,11 +125,7 @@ export default function Create() {
     if (t && !tags.includes(t)) setTags([...tags, t]);
     setTagInput("");
   }
-
-  function removeTag(t: string) {
-    setTags(tags.filter((x) => x !== t));
-  }
-
+  function removeTag(t: string) { setTags(tags.filter((x) => x !== t)); }
   function handleTagKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTagFromInput(); }
     if (e.key === "Backspace" && !tagInput && tags.length > 0) setTags(tags.slice(0, -1));
@@ -144,28 +196,51 @@ export default function Create() {
     e.target.value = "";
   }
 
-  // ── PDF import ────────────────────────────────────────────────────────────
+  // ── PDF import (pdfjs-dist v5, unpkg CDN worker) ──────────────────────────
   async function handlePdfUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setPdfLoading(true);
     setShowPdfPanel(true);
+    setPdfText("");
     try {
+      // Dynamically import pdfjs-dist
       const pdfjsLib = await import("pdfjs-dist");
+      // Use unpkg CDN for the worker — must match installed version exactly
+      const version = pdfjsLib.version;
       pdfjsLib.GlobalWorkerOptions.workerSrc =
-        `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+        `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+
       const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const loadingTask = pdfjsLib.getDocument({
+        data: new Uint8Array(arrayBuffer),
+        useWorkerFetch: false,
+        isEvalSupported: false,
+        useSystemFonts: true,
+      });
+      const pdf = await loadingTask.promise;
       let text = "";
-      for (let i = 1; i <= Math.min(pdf.numPages, 20); i++) {
+      const maxPages = Math.min(pdf.numPages, 30);
+      for (let i = 1; i <= maxPages; i++) {
         const page = await pdf.getPage(i);
         const content = await page.getTextContent();
-        text += content.items.map((item: any) => item.str).join(" ") + "\n";
+        const pageText = content.items
+          .map((item: any) => ("str" in item ? item.str : ""))
+          .join(" ");
+        text += pageText + "\n\n";
       }
-      setPdfText(text.trim().slice(0, 6000));
-      toast.success(`PDF extracted (${pdf.numPages} pages). Use the text to write your cards.`);
-    } catch {
-      toast.error("Could not read PDF. Make sure it contains selectable text.");
+      const trimmed = text.trim();
+      if (!trimmed) {
+        toast.error("No text found. This PDF may be image-based (scanned). Only text-based PDFs are supported.");
+        setShowPdfPanel(false);
+      } else {
+        setPdfText(trimmed.slice(0, 8000));
+        toast.success(`Extracted text from ${maxPages} page(s). Copy sections to write your flashcards.`);
+      }
+    } catch (err: any) {
+      console.error("PDF error:", err);
+      toast.error(`Could not read PDF: ${err?.message ?? "Unknown error"}. Make sure it contains selectable text.`);
+      setShowPdfPanel(false);
     } finally {
       setPdfLoading(false);
       if (pdfInputRef.current) pdfInputRef.current.value = "";
@@ -183,7 +258,7 @@ export default function Create() {
     return matchSearch && matchCat;
   });
 
-  const allCategories = ["All", ...Array.from(new Set(cards.map((c) => c.category)))];
+  const cardCategories = ["All", ...Array.from(new Set(cards.map((c) => c.category)))];
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
@@ -202,6 +277,7 @@ export default function Create() {
           {/* ── Form ─────────────────────────────────────────────────────── */}
           <div className="lg:col-span-3 space-y-5">
             <div className="bg-card rounded-2xl border border-border/60 p-6 shadow-sm space-y-5">
+
               {/* Question */}
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-foreground" htmlFor="question">
@@ -232,16 +308,102 @@ export default function Create() {
                 />
               </div>
 
-              {/* Category */}
+              {/* Category — with custom category manager */}
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-foreground">Category</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium text-foreground">Category</label>
+                  <button
+                    className="flex items-center gap-1 text-xs text-primary hover:underline"
+                    onClick={() => setShowCatManager(!showCatManager)}
+                  >
+                    <Pencil size={11} />
+                    {showCatManager ? "Done" : "Manage categories"}
+                  </button>
+                </div>
+
+                {/* Category manager panel */}
+                <AnimatePresence>
+                  {showCatManager && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="bg-muted/40 rounded-xl p-4 space-y-3 border border-border/40">
+                        <p className="text-xs text-muted-foreground font-medium">
+                          Add your own subjects. Built-in categories cannot be deleted.
+                        </p>
+
+                        {/* Add new category input */}
+                        <div className="flex gap-2">
+                          <input
+                            className="flex-1 rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                            placeholder="e.g. Music Theory, Law, Medicine…"
+                            value={newCatInput}
+                            onChange={(e) => setNewCatInput(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleAddCategory(); } }}
+                          />
+                          <Button
+                            size="sm"
+                            onClick={handleAddCategory}
+                            disabled={savingCat || !newCatInput.trim()}
+                            className="gap-1 shrink-0"
+                          >
+                            {savingCat ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                            Add
+                          </Button>
+                        </div>
+
+                        {/* Custom categories list */}
+                        {customCategories.length > 0 && (
+                          <div className="space-y-1.5">
+                            <p className="text-xs text-muted-foreground">Your custom categories:</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {customCategories.map((cat) => (
+                                <span
+                                  key={cat}
+                                  className="inline-flex items-center gap-1 bg-primary/10 text-primary text-xs rounded-full px-2.5 py-1"
+                                >
+                                  {cat}
+                                  <button
+                                    onClick={() => handleDeleteCategory(cat)}
+                                    className="ml-0.5 hover:text-destructive transition-colors"
+                                  >
+                                    <X size={10} />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Built-in categories (read-only display) */}
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground">Built-in categories (cannot be deleted):</p>
+                          <div className="flex flex-wrap gap-1">
+                            {DEFAULT_CATEGORIES.map((cat) => (
+                              <span key={cat} className="text-xs bg-muted text-muted-foreground rounded-full px-2 py-0.5">
+                                {cat}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Category selector dropdown */}
                 <div className="relative">
                   <select
                     value={category}
                     onChange={(e) => setCategory(e.target.value)}
                     className="w-full appearance-none rounded-xl border border-input bg-background px-4 py-2.5 pr-10 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
                   >
-                    {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                    {allCategoryOptions.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
                   </select>
                   <ChevronDown size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                 </div>
@@ -353,7 +515,8 @@ export default function Create() {
                 <h3 className="text-sm font-semibold text-foreground">Import from PDF</h3>
               </div>
               <p className="text-xs text-muted-foreground">
-                Upload a PDF to extract its text. Use the extracted content to write flashcards faster.
+                Upload a text-based PDF to extract its content. Use the extracted text to write flashcards faster.
+                <span className="block mt-0.5 text-muted-foreground/70">Note: scanned/image PDFs are not supported.</span>
               </p>
               <input ref={pdfInputRef} type="file" accept=".pdf" className="hidden" onChange={handlePdfUpload} />
               <Button
@@ -364,20 +527,37 @@ export default function Create() {
                 {pdfLoading ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
                 {pdfLoading ? "Extracting text…" : "Upload PDF"}
               </Button>
-              {showPdfPanel && pdfText && (
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">Extracted text (first 6,000 chars). Copy sections to create your cards:</p>
-                  <textarea
-                    className="w-full rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs font-mono resize-none focus:outline-none"
-                    rows={10}
-                    readOnly
-                    value={pdfText}
-                  />
-                  <Button size="sm" variant="ghost" className="text-xs" onClick={() => { setPdfText(""); setShowPdfPanel(false); }}>
-                    Clear
-                  </Button>
-                </div>
-              )}
+              <AnimatePresence>
+                {showPdfPanel && pdfText && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden space-y-2"
+                  >
+                    <p className="text-xs text-muted-foreground">
+                      Extracted text (up to 8,000 chars). Copy sections to create your flashcards:
+                    </p>
+                    <textarea
+                      className="w-full rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs font-mono resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+                      rows={12}
+                      readOnly
+                      value={pdfText}
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm" variant="outline" className="text-xs gap-1"
+                        onClick={() => { navigator.clipboard.writeText(pdfText); toast.success("Copied to clipboard!"); }}
+                      >
+                        Copy all
+                      </Button>
+                      <Button size="sm" variant="ghost" className="text-xs" onClick={() => { setPdfText(""); setShowPdfPanel(false); }}>
+                        Clear
+                      </Button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {/* Export / Import JSON */}
@@ -418,7 +598,7 @@ export default function Create() {
                   value={filterCategory}
                   onChange={(e) => setFilterCategory(e.target.value)}
                 >
-                  {allCategories.map((c) => <option key={c}>{c}</option>)}
+                  {cardCategories.map((c) => <option key={c}>{c}</option>)}
                 </select>
                 <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
               </div>

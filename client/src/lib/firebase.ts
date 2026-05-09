@@ -127,6 +127,7 @@ export interface UserSettings {
   displayName: string;
   language: string;
   notificationsEnabled: boolean;
+  customCategories: string[];
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -135,6 +136,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   displayName: "",
   language: "en",
   notificationsEnabled: true,
+  customCategories: [],
 };
 
 export async function fsGetSettings(uid: string): Promise<UserSettings> {
