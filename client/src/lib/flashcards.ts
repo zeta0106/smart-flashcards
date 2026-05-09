@@ -17,6 +17,8 @@ export interface Flashcard {
   incorrectCount: number;
   /** Next review timestamp (ms) */
   nextReview: number;
+  /** Total number of reviews */
+  reviewCount?: number;
 }
 
 export interface FlashcardSet {
