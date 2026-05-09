@@ -206,6 +206,8 @@ function vitePluginStorageProxy(): Plugin {
 const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy()];
 
 export default defineConfig({
+  // Use VITE_BASE_PATH env var for GitHub Pages (e.g. /smart-flashcards/)
+  base: process.env.VITE_BASE_PATH || "/",
   plugins,
   resolve: {
     alias: {
