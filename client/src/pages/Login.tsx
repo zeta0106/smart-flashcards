@@ -1,12 +1,14 @@
 /**
  * Login — Gate page shown to unauthenticated users.
  * Design: Scholarly Minimal — centered card with Google sign-in.
+ * Redirects to /dashboard automatically once Firebase auth state resolves.
  */
-import { useState } from "react";
-import { BookOpen, LogIn, Sparkles, Brain, Repeat2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { BookOpen, Sparkles, Brain, Repeat2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { useLocation } from "wouter";
 
 const FEATURES = [
   { icon: Brain, text: "Active recall for deeper memory" },
@@ -15,18 +17,35 @@ const FEATURES = [
 ];
 
 export default function Login() {
-  const { signIn } = useAuth();
+  const { signIn, user, loading: authLoading } = useAuth();
+  const [, setLocation] = useLocation();
   const [loading, setLoading] = useState(false);
+
+  // As soon as Firebase confirms the user is signed in, navigate to dashboard
+  useEffect(() => {
+    if (!authLoading && user) {
+      setLocation("/dashboard");
+    }
+  }, [user, authLoading, setLocation]);
 
   async function handleSignIn() {
     setLoading(true);
     try {
       await signIn();
+      // Navigation is handled by the useEffect above once onAuthStateChanged fires
     } catch (err: any) {
       toast.error(err?.message || "Sign-in failed. Please try again.");
-    } finally {
       setLoading(false);
     }
+  }
+
+  // Show spinner while auth state is being resolved on page load
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+      </div>
+    );
   }
 
   return (
