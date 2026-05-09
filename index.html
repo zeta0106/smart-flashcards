@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <title>Smart Flashcards — Effective Learning</title>
+    <meta name="description" content="Create, organize, and review flashcards with spaced repetition. Study smarter, not harder." />
+    <!-- Google Fonts: DM Serif Display + Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <!-- GitHub Pages SPA routing: restore path from ?p= redirect -->
+    <script>
+      (function(){
+        // Decode the ?p= query param written by 404.html and restore the real URL
+        var search = window.location.search;
+        if (search.length > 1) {
+          var params = {};
+          search.slice(1).split('&').forEach(function(s) {
+            var idx = s.indexOf('=');
+            if (idx > -1) params[s.slice(0, idx)] = decodeURIComponent(s.slice(idx + 1));
+          });
+          if (params.p !== undefined) {
+            // Rebuild: keep the repo prefix (/smart-flashcards) + the SPA route (/review etc.)
+            var pathParts = window.location.pathname.split('/');
+            var repoPrefix = pathParts[1] ? '/' + pathParts[1] : '';
+            var restored = repoPrefix + (params.p || '/') +
+              (params.q ? '?' + params.q : '') +
+              (window.location.hash || '');
+            window.history.replaceState(null, null, restored);
+          }
+        }
+      }());
+    </script>
+    <script type="module" crossorigin src="/smart-flashcards/assets/index-5CnaPIqv.js"></script>
+    <link rel="stylesheet" crossorigin href="/smart-flashcards/assets/index-q7mf8j5z.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script
+      defer
+      src="/umami"
+      data-website-id=""></script>
+  </body>
+</html>

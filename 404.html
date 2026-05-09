@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Smart Flashcards</title>
+    <!--
+      GitHub Pages SPA redirect trick.
+      When GitHub Pages serves a 404 for a deep link (e.g. /smart-flashcards/review),
+      this script redirects to the index.html at the repo root (/smart-flashcards/)
+      and encodes the intended path as a query param so the app can restore it.
+
+      Strategy:
+        /smart-flashcards/review  =>  /smart-flashcards/?p=/review
+        /smart-flashcards/create  =>  /smart-flashcards/?p=/create
+    -->
+    <script>
+      (function() {
+        var loc = window.location;
+        var pathParts = loc.pathname.split('/');
+        // For a GitHub Pages project site the repo name is always pathParts[1]
+        // e.g. ["", "smart-flashcards", "review"]
+        var repoSegment = pathParts[1] ? '/' + pathParts[1] : '';
+        // Everything after the repo segment is the SPA route
+        var spaPath = '/' + pathParts.slice(2).join('/');
+        // Redirect to /smart-flashcards/?p=/review (etc.)
+        var redirectUrl =
+          loc.protocol + '//' + loc.hostname +
+          (loc.port ? ':' + loc.port : '') +
+          repoSegment + '/' +
+          '?p=' + encodeURIComponent(spaPath) +
+          (loc.search ? '&q=' + encodeURIComponent(loc.search.slice(1)) : '') +
+          loc.hash;
+        loc.replace(redirectUrl);
+      }());
+    </script>
+  </head>
+  <body></body>
+</html>
